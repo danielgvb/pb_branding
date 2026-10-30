@@ -1,3 +1,4 @@
+import hmac
 import io
 
 import streamlit as st
@@ -6,6 +7,30 @@ from PIL import Image
 from brand_render import agent, catalog, config, fidelity, gemini
 
 st.set_page_config(page_title="Brand Render", page_icon="🏬", layout="wide")
+
+# ---------- password gate (set APP_PASSWORD in Streamlit Secrets; protects your Gemini key) ----------
+def _password_ok() -> bool:
+    expected = st.secrets.get("APP_PASSWORD") if hasattr(st, "secrets") else None
+    if not expected:
+        return True  # no password configured -> open (fine for local use)
+    if st.session_state.get("auth_ok"):
+        return True
+    pw = st.text_input("Password", type="password")
+    if pw and hmac.compare_digest(pw, str(expected)):
+        st.session_state["auth_ok"] = True
+        st.rerun()
+    elif pw:
+        st.error("Wrong password")
+    return False
+
+
+try:
+    _gate = _password_ok()
+except Exception:  # no secrets.toml at all (local run)
+    _gate = True
+if not _gate:
+    st.stop()
+
 st.title("🏬 SketchUp → Brand Render")
 st.caption("Applies the brand's materials, colors and lighting to a SketchUp screenshot — without changing the design.")
 
