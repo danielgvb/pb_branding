@@ -35,11 +35,16 @@ with st.sidebar:
     st.subheader("Brand database")
     index = catalog.load_index()
     if index:
-        st.success(f"{len(index['entries'])} images indexed · {', '.join(index['categories'])}")
-        with st.expander("Brand brief"):
+        st.success(f"{len(index['entries'])} swatches indexed")
+        if catalog.is_stale(index):
+            st.warning("Images in brand_db/ changed since the last index. Click **Rebuild index**.")
+        with st.expander("Swatches"):
+            for e in index["entries"]:
+                st.markdown(f"**{e['label']}** — {e['material']} ({e['finish']})")
+        with st.expander("Style brief"):
             st.markdown(index["brand_brief"])
     else:
-        st.warning("No index yet. Put JPGs in brand_db/<category>/ and build it.")
+        st.warning("No index yet. Put the swatch images in brand_db/ and click **Rebuild index**.")
     if st.button("🔄 Rebuild index", use_container_width=True):
         bar = st.progress(0.0, "Indexing…")
         index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg))
@@ -80,7 +85,8 @@ if up and res:
     buf = io.BytesIO(); res.image.save(buf, "JPEG", quality=95)
     st.download_button("⬇️ Download render", buf.getvalue(), "render.jpg", "image/jpeg")
 
-    t1, t2, t3, t4 = st.tabs(["Fidelity overlay", "Attempts", "References used", "Scene analysis"])
+    t1, t2, t3, t4, t5 = st.tabs(["Fidelity overlay", "Attempts", "Material assignment", "Swatches used",
+                                  "Scene analysis"])
     with t1:
         st.caption("Red = SketchUp lines drawn over the render. Lines should sit on the same edges.")
         st.image(fidelity.overlay(sketch, res.image), use_container_width=True)
@@ -92,9 +98,11 @@ if up and res:
             c1.image(a["image"], use_container_width=True)
             c2.json(a["qa"])
     with t3:
-        cols = st.columns(5)
-        for i, e in enumerate(res.references):
-            cols[i % 5].image(catalog.load_ref(e, 400), caption=f"#{i + 2} {e['category']}: {e['subject']}",
-                              use_container_width=True)
+        st.table([a.model_dump() for a in res.plan.assignments])
     with t4:
+        cols = st.columns(4)
+        for i, e in enumerate(res.references):
+            cols[i % 4].image(catalog.load_ref(e, 400), caption=f"IMAGE {i + 2} · {e['label']}",
+                              use_container_width=True)
+    with t5:
         st.json(res.analysis.model_dump())
