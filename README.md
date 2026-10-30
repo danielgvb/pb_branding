@@ -52,9 +52,8 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # add your GEMINI_A
 ```
 
 1. Put the swatches in `brand_db/` (see above).
-2. The index builds itself: on first app run (key from Streamlit Secrets), and on every push that
-   changes `brand_db/` via the GitHub Action (key from the repo secret `GEMINI_API_KEY`).
-   Manual: `python scripts/build_index.py`.
+2. The index builds itself when the app starts (and again whenever `brand_db/` changes).
+   Manual alternative: `python scripts/build_index.py`.
 3. Run: `streamlit run app.py`
 4. Batch: `python scripts/render_cli.py shots/*.jpg --out renders/`
 
