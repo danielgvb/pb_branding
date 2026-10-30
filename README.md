@@ -32,7 +32,7 @@ Drop swatch images directly in `brand_db/` with descriptive Spanish names. Curre
 |---|---|
 | `PISO GENERAL` | main floor |
 | `PISO ESPECIAL` | a visibly distinct floor zone in the model (only if one exists) |
-| `TEXTURA PAREDES`, `TEXTURA PAREDES 2` | walls |
+| `TEXTURA PAREDES` / `TEXTURA PAREDES 2` | walls: lighter-modeled walls → lighter texture, darker-modeled walls → darker texture (tone measured automatically from the swatch) |
 | `TEXTURA COLUMNAS` | columns |
 | `MADERA NOGAL` | wood furniture / panels |
 | `METAL BLANCO MICROTEXTURIZADO` | metal fixtures, racks, frames |
@@ -52,7 +52,9 @@ cp .streamlit/secrets.toml.example .streamlit/secrets.toml   # add your GEMINI_A
 ```
 
 1. Put the swatches in `brand_db/` (see above).
-2. Build the index: `python scripts/build_index.py`. Commit `brand_db/index.json`.
+2. The index builds itself: on first app run (key from Streamlit Secrets), and on every push that
+   changes `brand_db/` via the GitHub Action (key from the repo secret `GEMINI_API_KEY`).
+   Manual: `python scripts/build_index.py`.
 3. Run: `streamlit run app.py`
 4. Batch: `python scripts/render_cli.py shots/*.jpg --out renders/`
 
@@ -74,5 +76,4 @@ The sidebar lists the models your key can see, so you can swap models without co
 - **Better SketchUp exports give better renders**: hide axes and guides, use the "Shaded" style with
   visible edges, and model every object you want in the render. Anything left out of the model stays out of the render.
 - **Model zones in SketchUp with different colors** (e.g. the special-floor area). That is how the assigner tells PISO ESPECIAL from PISO GENERAL, or the two wall textures apart.
-- To tell the two wall textures apart, rename them for their use (e.g. `TEXTURA PAREDES FONDO.jpg`, `TEXTURA PAREDES LATERALES.jpg`).
 - Tune `EDGE_FIDELITY_MIN` in `config.py` on a few real sketches. Check the "Fidelity overlay" tab.

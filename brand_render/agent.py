@@ -27,6 +27,7 @@ class SceneElement(BaseModel):
     count: int
     location: str      # where in the frame
     modeled_color: str # color/material as drawn in SketchUp
+    relative_tone: str # light | medium | dark, compared with OTHER elements of the same kind
 
 
 class SceneAnalysis(BaseModel):
@@ -69,7 +70,9 @@ class RunResult:
 ANALYZE_PROMPT = (
     "This is a SketchUp screenshot of a clothing store (interior or facade). List EVERY visible "
     "architectural surface and object, grouping identical ones with a count. Split surfaces that are "
-    "visibly different zones (e.g. a floor with two different modeled colors/areas -> two elements). "
+    "visibly different zones: e.g. walls modeled in a lighter vs a darker color -> separate elements; "
+    "a floor area modeled in a different color/pattern from the rest -> separate element. For each element "
+    "give its relative tone (light/medium/dark) compared with the other elements of the same kind. "
     "Use snake_case names. Describe the camera. Be exhaustive and literal; do not interpret or suggest."
 )
 
@@ -84,9 +87,13 @@ For EVERY scene element choose exactly one material label from the list above, o
 applies (e.g. glass, mirrors, lamps, ceilings with no ceiling swatch). Rules:
 - PISO = floor, PAREDES = walls, COLUMNAS = columns, FACHADA = exterior facade, MADERA = wood
   furniture/fixtures/panels, METAL = metal fixtures, racks, frames, structure, TECHO = ceiling.
-- When there are two variants (e.g. PISO GENERAL vs PISO ESPECIAL), use GENERAL for the main area and
-  ESPECIAL only for a visibly distinct, special zone in the model (different modeled color, raised area,
-  feature zone, entrance). If no such zone exists, use only GENERAL.
+- WALLS: there are several wall textures that differ in tone (see LIGHTEST/DARKEST in the list). The
+  SketchUp model encodes which is which by color: walls modeled DARKER get the DARKEST wall texture,
+  walls modeled LIGHTER get the LIGHTEST wall texture. Compare wall tones within IMAGE 1, not absolutely.
+  If every wall has the same modeled tone, use the LIGHTEST wall texture for all of them.
+- FLOORS: PISO GENERAL is the default for all floor. Use PISO ESPECIAL ONLY for a floor zone that is
+  visibly distinct in IMAGE 1 (modeled in a different color/pattern, raised, or bounded area).
+  If no such zone exists, do not use PISO ESPECIAL at all.
 - Use the color/material shown in the SketchUp model as a hint (e.g. a brown-modeled table -> wood).
 - FACHADA only applies if an exterior facade is visible.
 - If unsure, use {keep}. Never invent elements."""
@@ -136,8 +143,11 @@ def nearest_ratio(img: Image.Image) -> str:
     return min(config.SUPPORTED_RATIOS, key=lambda s: abs(val(s) - r))
 
 
-def _describe(e: dict) -> str:
-    return f"{e['label']}: {e.get('material', '')}, {e.get('finish', '')}, colors {', '.join(e.get('colors', []))}"
+def _describe(e: dict, notes: dict | None = None) -> str:
+    d = f"{e['label']}: {e.get('material', '')}, {e.get('finish', '')}, colors {', '.join(e.get('colors', []))}"
+    if notes and e["label"] in notes:
+        d += f" [{notes[e['label']]}]"
+    return d
 
 
 def select_references(c, index: dict, analysis: SceneAnalysis, budget: int) -> list[dict]:
@@ -171,11 +181,13 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
     refs = select_references(c, index, res.analysis, max_refs)
     res.references = refs
     ref_parts = [gemini.to_part(catalog.load_ref(e)) for e in refs]
-    legend = "\n".join(f"- IMAGE {i + 2} = {_describe(e)}" for i, e in enumerate(refs))
+    notes = catalog.tone_notes(refs)
+    legend = "\n".join(f"- IMAGE {i + 2} = {_describe(e, notes)}" for i, e in enumerate(refs))
     log(f"   {len(refs)} swatches: {', '.join(e['label'] for e in refs)}")
 
     log("3/5 Assigning materials to elements…")
-    elements_txt = "\n".join(f"- {el.name} ({el.kind}, x{el.count}, {el.location}, modeled as {el.modeled_color})"
+    elements_txt = "\n".join(f"- {el.name} ({el.kind}, x{el.count}, {el.location}, modeled as {el.modeled_color}, "
+                             f"tone {el.relative_tone})"
                              for el in res.analysis.elements)
     res.plan = gemini.ask_json(
         c, [sketch_part, *ref_parts,
@@ -187,7 +199,7 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
     res.references = used
     ref_parts = [gemini.to_part(catalog.load_ref(e)) for e in used]
     label_to_img = {e["label"]: i + 2 for i, e in enumerate(used)}
-    legend = "\n".join(f"- IMAGE {i + 2} = {_describe(e)}" for i, e in enumerate(used)) or "- (none)"
+    legend = "\n".join(f"- IMAGE {i + 2} = {_describe(e, notes)}" for i, e in enumerate(used)) or "- (none)"
     assignments = "\n".join(
         f"- {el} -> {lab} (IMAGE {label_to_img[lab]})" if lab in known else f"- {el} -> {KEEP}"
         for el, lab in pairs)
@@ -197,7 +209,7 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
     brief = index.get("brand_brief", "")
     if extra_instructions:
         brief += f"\nADDITIONAL INSTRUCTIONS FROM USER: {extra_instructions}"
-    materials_txt = "\n".join(f"   - {_describe(e)}" for e in used)
+    materials_txt = "\n".join(f"   - {_describe(e, notes)}" for e in used)
     feedback = ""
 
     for attempt in range(max_retries + 1):

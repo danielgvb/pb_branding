@@ -132,6 +132,42 @@ def load_path(path: Path, max_side: int = 1024) -> Image.Image:
     return img
 
 
+FAMILIES = {"PISO": "floor", "PARED": "wall", "COLUMNA": "column", "FACHADA": "facade",
+            "MADERA": "wood", "METAL": "metal", "TECHO": "ceiling"}
+
+
+def family(label: str) -> str | None:
+    for key, fam in FAMILIES.items():
+        if key in label:
+            return fam
+    return None
+
+
+def lightness(entry: dict) -> float:
+    """Mean perceived lightness 0 (black) .. 1 (white), computed locally from the swatch."""
+    a = np.asarray(load_ref(entry, 256).convert("L"), dtype=np.float32) / 255.0
+    return float(a.mean())
+
+
+def tone_notes(entries: list[dict]) -> dict[str, str]:
+    """For families with several swatches (e.g. two wall textures), rank them light -> dark.
+    Floors are excluded: they are chosen by zone (GENERAL vs ESPECIAL), not by tone."""
+    groups: dict[str, list[tuple[float, str]]] = {}
+    for e in entries:
+        fam = family(e["label"])
+        if fam and fam != "floor":
+            groups.setdefault(fam, []).append((lightness(e), e["label"]))
+    notes = {}
+    for fam, items in groups.items():
+        if len(items) < 2:
+            continue
+        items.sort(reverse=True)
+        for rank, (l, lab) in enumerate(items):
+            pos = "LIGHTEST" if rank == 0 else "DARKEST" if rank == len(items) - 1 else "MID-TONE"
+            notes[lab] = f"{pos} of the {len(items)} {fam} options (lightness {l:.2f})"
+    return notes
+
+
 def load_ref(entry: dict, max_side: int = 1024) -> Image.Image:
     return load_path(config.BRAND_DB_DIR / entry["path"], max_side)
 

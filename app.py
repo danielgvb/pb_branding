@@ -34,17 +34,19 @@ with st.sidebar:
     st.divider()
     st.subheader("Brand database")
     index = catalog.load_index()
+    if catalog.is_stale(index):  # missing, or images added/renamed -> build automatically
+        bar = st.progress(0.0, "Indexing brand swatches (first run)…")
+        index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg))
+        bar.empty()
     if index:
         st.success(f"{len(index['entries'])} swatches indexed")
-        if catalog.is_stale(index):
-            st.warning("Images in brand_db/ changed since the last index. Click **Rebuild index**.")
         with st.expander("Swatches"):
+            tones = catalog.tone_notes(index["entries"])
             for e in index["entries"]:
-                st.markdown(f"**{e['label']}** — {e['material']} ({e['finish']})")
+                note = f" · _{tones[e['label']]}_" if e["label"] in tones else ""
+                st.markdown(f"**{e['label']}** — {e['material']} ({e['finish']}){note}")
         with st.expander("Style brief"):
             st.markdown(index["brand_brief"])
-    else:
-        st.warning("No index yet. Put the swatch images in brand_db/ and click **Rebuild index**.")
     if st.button("🔄 Rebuild index", use_container_width=True):
         bar = st.progress(0.0, "Indexing…")
         index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg))
