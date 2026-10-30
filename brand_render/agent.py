@@ -171,6 +171,8 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
     c = gemini.client()
     res = RunResult()
     sketch = sketch.convert("RGB")
+    if max(sketch.size) > 2048:  # keep requests small; output resolution is set separately
+        sketch = sketch.copy(); sketch.thumbnail((2048, 2048))
     sketch_part = gemini.to_part(sketch, 95)
 
     log("1/5 Analyzing the SketchUp scene…")

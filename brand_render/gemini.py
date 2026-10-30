@@ -5,8 +5,10 @@ import io
 import json
 import time
 
+import re
+
 from google import genai
-from google.genai import types
+from google.genai import errors, types
 from PIL import Image
 
 from . import config
@@ -27,14 +29,36 @@ def to_part(img: Image.Image | bytes, quality: int = 90) -> types.Part:
     return types.Part.from_bytes(data=img, mime_type="image/jpeg")
 
 
-def _retry(fn, attempts: int = 3):
+RETRYABLE = {429, 500, 502, 503, 504}
+
+
+def _retry(fn, attempts: int = 5):
+    """Retry only transient errors. 429 (rate limit) honours the server's suggested delay."""
     for i in range(attempts):
         try:
             return fn()
-        except Exception:
-            if i == attempts - 1:
+        except errors.APIError as e:
+            if e.code not in RETRYABLE or i == attempts - 1:
                 raise
-            time.sleep(2 ** i * 2)
+            m = re.search(r"retry in ([\d.]+)s|retryDelay['\"]?: ?['\"]?(\d+)", str(e))
+            wait = float(next(g for g in m.groups() if g)) + 1 if m else min(60, 5 * 2 ** i)
+            time.sleep(wait)
+
+
+def explain(e: Exception) -> str:
+    """Human-readable explanation of a Gemini API error (Streamlit Cloud redacts the original)."""
+    if not isinstance(e, errors.APIError):
+        return f"{type(e).__name__}: {e}"
+    msg = (e.message or str(e))[:600]
+    hints = {
+        400: "Bad request: usually the selected model does not support this call. Pick another model in the sidebar.",
+        401: "API key invalid. Check GEMINI_API_KEY in Streamlit Secrets.",
+        403: "The key has no access to this model (the image models need billing enabled on the Google AI Studio project).",
+        404: "Model not found: the model name changed or is not available to your key. Pick another in the sidebar.",
+        429: "Quota / rate limit exceeded. Free-tier keys have low per-minute limits and NO access to the Pro image "
+             "model. Wait a minute and retry, enable billing in Google AI Studio, or choose a Flash image model.",
+    }
+    return f"Gemini API error {e.code} ({e.status}): {msg}\n\n**What to do:** {hints.get(e.code, 'See message above.')}"
 
 
 def ask_json(c: genai.Client, contents: list, schema, model: str | None = None):
@@ -102,8 +126,18 @@ def embed_text(c: genai.Client, text: str) -> list[float]:
     return list(res.embeddings[0].values)
 
 
+EXCLUDE = ("live", "tts", "audio", "embedding", "aqa", "imagen", "veo", "robotics", "computer-use", "learnlm", "gemma")
+
+
 def list_models(c: genai.Client) -> list[str]:
+    """Models usable with generateContent, minus live/audio/tts/etc. variants."""
     try:
-        return sorted(m.name.removeprefix("models/") for m in c.models.list())
+        out = []
+        for m in c.models.list():
+            name = m.name.removeprefix("models/")
+            actions = m.supported_actions or []
+            if "generateContent" in actions and name.startswith("gemini") and not any(x in name for x in EXCLUDE):
+                out.append(name)
+        return sorted(out)
     except Exception:
         return []

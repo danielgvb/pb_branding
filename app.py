@@ -46,13 +46,13 @@ with st.sidebar:
         return gemini.list_models(gemini.client())
 
     models = _models()
-    img_models = [m for m in models if "image" in m] or [config.RENDER_MODEL]
-    txt_models = [m for m in models if m.startswith("gemini") and "image" not in m
-                  and "embedding" not in m and "tts" not in m] or [config.VISION_MODEL]
+    # Defaults always first, so a stray alphabetical pick never becomes the default.
+    img_models = [config.RENDER_MODEL] + [m for m in models if "image" in m and m != config.RENDER_MODEL]
+    txt_models = [config.VISION_MODEL] + [m for m in models if "image" not in m and m != config.VISION_MODEL]
     render_model = st.selectbox("Render model", img_models,
-                                index=img_models.index(config.RENDER_MODEL) if config.RENDER_MODEL in img_models else 0)
+                                index=0)
     vision_model = st.selectbox("Analysis / QA model", txt_models,
-                                index=txt_models.index(config.VISION_MODEL) if config.VISION_MODEL in txt_models else 0)
+                                index=0)
     max_refs = st.slider("Max reference images", 3, 13, config.MAX_REFERENCES)
     max_retries = st.slider("Max repair attempts", 0, 3, config.MAX_RETRIES)
 
@@ -61,7 +61,11 @@ with st.sidebar:
     index = catalog.load_index()
     if catalog.is_stale(index):  # missing, or images added/renamed -> build automatically
         bar = st.progress(0.0, "Indexing brand swatches (first run)…")
-        index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg))
+        try:
+            index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg))
+        except Exception as e:
+            st.error(gemini.explain(e))
+            st.stop()
         bar.empty()
     if index:
         st.success(f"{len(index['entries'])} swatches indexed")
@@ -94,9 +98,14 @@ if up:
 
     if st.button("✨ Render with brand style", type="primary"):
         logbox = st.status("Running…", expanded=True)
-        res = agent.run(sketch, index, render_model=render_model, vision_model=vision_model,
-                        extra_instructions=extra, max_refs=max_refs, max_retries=max_retries,
-                        log=logbox.write)
+        try:
+            res = agent.run(sketch, index, render_model=render_model, vision_model=vision_model,
+                            extra_instructions=extra, max_refs=max_refs, max_retries=max_retries,
+                            log=logbox.write)
+        except Exception as e:
+            logbox.update(label="Failed", state="error")
+            st.error(gemini.explain(e))
+            st.stop()
         logbox.update(label="Done" if res.passed else "Done — review flagged issues",
                       state="complete" if res.passed else "error")
         st.session_state["res"] = res
