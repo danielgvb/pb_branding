@@ -112,7 +112,11 @@ ABSOLUTE RULES (violating any of them is a failure):
    no extra lights or furniture, unless it is already modeled in IMAGE 1.
 5. Do NOT remove or merge anything.
 6. Only change surface appearance (materials, textures, finishes) and make the lighting realistic.
-7. Apply each swatch at realistic real-world scale (tile/plank size, grain size), following the surface's
+7. IMAGE 1 is a SketchUp viewport: do NOT reproduce any SketchUp drawing artifacts. Remove the
+   red/green/blue axis lines, dashed guide lines, section planes, selection highlights, the black edge
+   outlines and any colored construction lines. Edges must appear as real physical material boundaries,
+   never as drawn lines. The output must look like a photograph, with no lines painted over surfaces.
+8. Apply each swatch at realistic real-world scale (tile/plank size, grain size), following the surface's
    perspective. Elements marked {keep} keep the color shown in IMAGE 1, rendered realistically.
 
 MATERIAL ASSIGNMENT (element -> material):
@@ -126,6 +130,8 @@ Output only the final rendered image, same aspect ratio as IMAGE 1."""
 QA_PROMPT = """IMAGE A is a SketchUp screenshot. IMAGE B is supposed to be the SAME scene rendered photorealistically.
 1) Geometry audit: compare camera, walls, openings and every object (count, position, size, shape).
    List every object/feature in B that was ADDED, REMOVED, MOVED or RESHAPED compared with A.
+   Also report as a violation any drawn line visible in B (e.g. red/green/blue axis lines or outline
+   strokes copied from the SketchUp viewport): B must look like a photograph.
    Material/lighting changes are expected and are NOT geometry violations.
 2) Material audit: this was the required material assignment:
 {assignments}
