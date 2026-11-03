@@ -99,36 +99,36 @@ applies (e.g. glass, mirrors, lamps, ceilings with no ceiling swatch). Rules:
   If no such zone exists, do not use PISO ESPECIAL at all.
 - Use the color/material shown in the SketchUp model as a hint (e.g. a brown-modeled table -> wood).
 - FACHADA only applies if an exterior facade is visible.
-- If unsure, use {keep}. Never invent elements."""
+- If unsure, use {keep}. Never invent elements.
+PROJECT RULES:
+{context}"""
 
-RENDER_RULES = """You are a photorealistic architectural visualizer. IMAGE 1 is a SketchUp model screenshot.
-The other images are the architect's material swatches:
-{legend}
+EDIT_HEADER = """IMAGE EDITING TASK, not a redesign. The first image is a SketchUp screenshot of an approved design.
+Edit it into a photorealistic image by changing ONLY the surface materials listed below.
+The geometry, camera and every object must stay exactly as in the screenshot."""
 
-TASK: Produce a photorealistic render of IMAGE 1 with the materials applied exactly as assigned below.
+EDIT_RULES = """WHAT YOU MAY CHANGE (and nothing else):
+A. The surface material of the elements listed in the MATERIAL MAP, using the matching swatch above,
+   at realistic real-world scale, following each surface's perspective.
+B. Photorealism: realistic shading, soft shadows, reflections and material sheen from the light sources
+   that already exist in the screenshot.
+C. Remove SketchUp viewport artifacts: axis lines (red/green/blue), guides, black outline strokes.
 
-ABSOLUTE RULES (violating any of them is a failure):
-1. Keep the EXACT same camera position, angle, focal length and framing as IMAGE 1.
-2. Keep every wall, opening, column, ceiling and floor boundary exactly where it is. Same proportions.
-3. Keep EXACTLY the objects in IMAGE 1: same number, positions, sizes and shapes.
-4. Do NOT add anything: no people, no clothing, no mannequins, no plants, no decor, no logos, no text,
-   no extra lights or furniture, unless it is already modeled in IMAGE 1.
-5. Do NOT remove or merge anything.
-6. Only change surface appearance (materials, textures, finishes) and make the lighting realistic.
-7. IMAGE 1 is a SketchUp viewport: do NOT reproduce any SketchUp drawing artifacts. Remove the
-   red/green/blue axis lines, dashed guide lines, section planes, selection highlights, the black edge
-   outlines and any colored construction lines. Edges must appear as real physical material boundaries,
-   never as drawn lines. The output must look like a photograph, with no lines painted over surfaces.
-8. Apply each swatch at realistic real-world scale (tile/plank size, grain size), following the surface's
-   perspective. Elements marked {keep} keep the color shown in IMAGE 1, rendered realistically.
-
-MATERIAL ASSIGNMENT (material -> elements that use it):
+MATERIAL MAP (swatch -> elements):
 {assignments}
 
-STYLE BRIEF:
-{brief}
+EVERYTHING ELSE IS FROZEN:
+- Same camera, viewpoint, focal length, framing and aspect ratio. Do not zoom, crop, rotate or extend.
+- Same walls, openings, columns, ceiling and floor layout, in exactly the same pixel positions.
+- Same objects: same count, position, size, shape and modeled color. Nothing added, removed, moved,
+  merged, restyled or "improved". No people, products, clothing, plants, decor, logos or text added.
+- Elements not in the MATERIAL MAP keep their modeled color and shape; only make them look photoreal.
+- When in doubt about anything, leave it exactly as it is in the screenshot.
+
+PROJECT RULES:
+{context}
 {feedback}
-Output only the final rendered image, same aspect ratio as IMAGE 1."""
+FINAL CHECK before answering: the output must overlay the screenshot line-for-line. Output only the edited image."""
 
 QA_PROMPT = """IMAGE A is a SketchUp screenshot. IMAGE B is supposed to be the SAME scene rendered photorealistically.
 Audit B against A and list concrete issues, each with a kind and a severity.
@@ -138,6 +138,8 @@ MAJOR (would make the render unusable):
 - an object ADDED that is not in A, or an object from A REMOVED, or clearly MOVED/RESIZED
 - a large surface (floor, a wall, columns, main furniture) with the WRONG material vs the assignment
 - drawn lines visible in B (axis lines, outline strokes copied from SketchUp)
+- an element that is NOT in the material assignment changed color, material or style noticeably
+- any violation of the PROJECT RULES below
 MINOR (acceptable): small decor details, slight shape/proportion differences, lighting/shading, texture
 scale or tone variations, small objects with slightly different materials.
 Material/lighting changes are expected and are not geometry issues. Be fair: do not report MAJOR unless sure.
@@ -146,21 +148,22 @@ Required material assignment:
 {assignments}
 Material descriptions:
 {materials}
+PROJECT RULES:
+{context}
 
 Score 0-10: 10 = same design with the right materials, 7 = only minor issues, <5 = major issues."""
 
-REPAIR_PROMPT = """IMAGE 1 is a SketchUp model screenshot (the ground truth for geometry and objects).
-The material swatches are:
-{legend}
-The LAST image is a photorealistic render of IMAGE 1 that is ALMOST correct.
-
-TASK: Edit the LAST image to fix ONLY these problems:
+REPAIR_RULES = """The LAST image is an edit of the SketchUp screenshot that is ALMOST correct.
+Edit the LAST image again to fix ONLY these problems, using the SketchUp screenshot as ground truth:
 {issues}
 
-Keep everything else in the LAST image exactly as it is (camera, lighting, materials, all other objects).
-Do not add or remove anything else. No drawn lines. Material assignment for reference:
+Everything else in the LAST image stays exactly as it is (camera, materials, lighting, all other objects).
+Do not add, remove or move anything else. No drawn lines.
+MATERIAL MAP for reference:
 {assignments}
-Output only the corrected image, same aspect ratio."""
+PROJECT RULES:
+{context}
+Output only the corrected image, same framing."""
 
 
 # ---------- helpers ----------
@@ -196,10 +199,13 @@ def select_references(c, index: dict, analysis: SceneAnalysis, budget: int) -> l
 def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
         vision_model: str | None = None, qa_model: str | None = None, extra_instructions: str = "",
         max_refs: int = config.MAX_REFERENCES, max_retries: int = config.MAX_RETRIES,
-        n_candidates: int = config.N_CANDIDATES,
+        n_candidates: int = config.N_CANDIDATES, context: str | None = None,
         log: Callable[[str], None] = print) -> RunResult:
     c = gemini.client()
     res = RunResult()
+    context = (context if context is not None else config.load_context()) or "- (none)"
+    if extra_instructions:
+        context += f"\n- Notes for this image: {extra_instructions}"
     sketch = sketch.convert("RGB")
     if max(sketch.size) > 2048:  # keep requests small; output resolution is set separately
         sketch = sketch.copy(); sketch.thumbnail((2048, 2048))
@@ -223,35 +229,34 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
                              for el in res.analysis.elements)
     res.plan = gemini.ask_json(
         c, [sketch_part, *ref_parts,
-            ASSIGN_PROMPT.format(legend=legend, elements=elements_txt, keep=KEEP)], AssignmentPlan, vision_model)
+            ASSIGN_PROMPT.format(legend=legend, elements=elements_txt, keep=KEEP, context=context)], AssignmentPlan, vision_model)
     # Keep only the swatches that were actually assigned, renumbered, so unused ones can't leak in.
     known = {e["label"]: e for e in refs}
     pairs = [(a.element, a.material_label.strip().upper()) for a in res.plan.assignments]
     used = [e for e in refs if any(lab == e["label"] for _, lab in pairs)]
     res.references = used
     ref_parts = [gemini.to_part(catalog.load_ref(e)) for e in used]
-    label_to_img = {e["label"]: i + 2 for i, e in enumerate(used)}
     legend = "\n".join(f"- IMAGE {i + 2} = {_describe(e, notes)}" for i, e in enumerate(used)) or "- (none)"
     groups: dict[str, list[str]] = {}
     for el, lab in pairs:
         groups.setdefault(lab if lab in known else KEEP, []).append(el.replace("_", " "))
-    lines = [f"- {lab} (IMAGE {label_to_img[lab]}): {', '.join(els)}" for lab, els in groups.items() if lab != KEEP]
+    lines = [f"- SWATCH {lab}: {', '.join(els)}" for lab, els in groups.items() if lab != KEEP]
     if KEEP in groups:
-        lines.append(f"- {KEEP} (keep the color shown in IMAGE 1, rendered realistically): {', '.join(groups[KEEP])}")
+        lines.append(f"- NOT CHANGED (keep modeled color/shape, only photoreal): {', '.join(groups[KEEP])}")
     assignments = "\n".join(lines)
     log("   " + assignments.replace("\n", "\n   "))
 
     ratio = nearest_ratio(sketch)
-    brief = index.get("brand_brief", "")
-    if extra_instructions:
-        brief += f"\nADDITIONAL INSTRUCTIONS FROM USER: {extra_instructions}"
     materials_txt = "\n".join(f"   - {_describe(e, notes)}" for e in used)
-    swatch_parts = list(ref_parts)
+    # Interleave a text label right before each image: more reliable than "IMAGE n" references.
+    labeled = ["SCREENSHOT TO EDIT (ground truth for camera, geometry and objects):", sketch_part]
+    for e, part in zip(used, ref_parts):
+        labeled += [f"SWATCH {e['label']}: {_describe(e, notes).split(': ', 1)[-1]}", part]
 
     def evaluate(img: Image.Image, label: str) -> dict:
         edge = fidelity.edge_fidelity(sketch, img)
         qa = gemini.ask_json(c, [sketch_part, gemini.to_part(img),
-                                 QA_PROMPT.format(assignments=assignments, materials=materials_txt)],
+                                 QA_PROMPT.format(assignments=assignments, materials=materials_txt, context=context)],
                              QAReport, qa_model or vision_model)
         major = [i for i in qa.issues if i.severity.lower() == "major"]
         passed = edge >= config.EDGE_FIDELITY_MIN and not major and qa.score >= config.QA_MIN_SCORE
@@ -266,11 +271,11 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
             f"{len(a['major'])} major issue(s) | {'PASS' if a['passed'] else 'FAIL'}")
 
     # 4. First run: N independent candidates in parallel, keep the best (best-of-N beats sequential retries).
-    prompt = RENDER_RULES.format(legend=legend, assignments=assignments, brief=brief, feedback="", keep=KEEP)
+    prompt = EDIT_RULES.format(assignments=assignments, context=context, feedback="")
     log(f"4/5 Rendering {n_candidates} candidate(s) in parallel…")
 
     def candidate(i: int) -> dict:
-        img = gemini.generate_image(c, [sketch_part, *swatch_parts, prompt], ratio, model=render_model)
+        img = gemini.generate_image(c, [EDIT_HEADER, *labeled, prompt], ratio, model=render_model)
         return evaluate(img, f"candidate {i + 1}")
 
     with ThreadPoolExecutor(max_workers=n_candidates) as ex:
@@ -294,12 +299,12 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
             break
         issues = best["major"] or [i["issue"] for i in best["qa"]["issues"]][:5]
         if best["edge_fidelity"] < config.EDGE_FIDELITY_MIN:
-            issues.append("geometry/camera drifted from IMAGE 1: realign walls, openings and objects to IMAGE 1")
+            issues.append("geometry/camera drifted from the screenshot: realign walls, openings and objects to it")
         log(f"↺ Repair {r + 1}: fixing {len(issues)} issue(s) on the best render…")
-        rp = REPAIR_PROMPT.format(legend=legend, assignments=assignments,
-                                  issues="\n".join(f"- {x}" for x in issues))
+        rp = REPAIR_RULES.format(assignments=assignments, context=context,
+                                 issues="\n".join(f"- {x}" for x in issues))
         try:
-            img = gemini.generate_image(c, [sketch_part, *swatch_parts, gemini.to_part(best["image"], 95), rp],
+            img = gemini.generate_image(c, [*labeled, "LAST IMAGE (edit to correct):", gemini.to_part(best["image"], 95), rp],
                                         ratio, model=render_model)
         except Exception as e:
             log(f"   repair failed: {gemini.explain(e)[:200]}")

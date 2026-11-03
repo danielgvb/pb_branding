@@ -42,6 +42,12 @@ Naming keywords the assigner understands: PISO, PAREDES, COLUMNAS, FACHADA, MADE
 Sub-folders also work (`brand_db/<category>/...`). **After adding/renaming images, rebuild the index**
 (sidebar button or `python scripts/build_index.py`); the app warns when the index is stale.
 
+## Project rules (`render_context.md`)
+Plain-language rules sent to the assigner, the renderer and the QA checker (e.g. "murals stay as modeled",
+"never add products"). Edit the file on GitHub for permanent rules, or the "Project rules" box in the app
+for one session. The renderer is framed as an **edit**: only the listed surfaces may change; everything
+else is frozen, and when in doubt it is left as modeled.
+
 ## Setup
 
 ```bash

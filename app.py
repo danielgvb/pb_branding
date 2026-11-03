@@ -97,7 +97,10 @@ if not index:
 
 # ---------- main ----------
 up = st.file_uploader("SketchUp screenshot (JPG/PNG)", type=["jpg", "jpeg", "png"])
-extra = st.text_input("Optional notes (e.g. 'evening lighting', 'use the oak table finish')", "")
+extra = st.text_input("Notes for this image (optional)",
+                      placeholder="e.g. 'the draped partition is a linen curtain', 'the mural stays as is'")
+with st.expander("📋 Project rules sent to every step (edit for this session; permanent: render_context.md)"):
+    context = st.text_area("Project rules", config.load_context(), height=220, label_visibility="collapsed")
 
 if up:
     sketch = Image.open(up).convert("RGB")
@@ -112,7 +115,7 @@ if up:
         try:
             res = agent.run(sketch, index, render_model=render_model, vision_model=vision_model, qa_model=qa_model,
                             extra_instructions=extra, max_refs=max_refs, max_retries=max_retries,
-                            n_candidates=n_candidates, log=logbox.write)
+                            n_candidates=n_candidates, context=context, log=logbox.write)
         except Exception as e:
             logbox.update(label="Failed", state="error")
             st.error(gemini.explain(e))

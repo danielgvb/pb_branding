@@ -53,6 +53,17 @@ QA_MIN_SCORE = 7             # QA score needed to pass (plus no MAJOR issues and
 EDGE_FIDELITY_MIN = 0.75     # min structural overlap (0-1); a 5% camera shift scored ~0.71 in tests. Tune on real sketches.
 OUTPUT_SIZE = os.getenv("OUTPUT_SIZE", "2K")  # 1K / 2K / 4K
 
+CONTEXT_PATH = ROOT / "render_context.md"
+
+
+def load_context() -> str:
+    """Project rules from render_context.md (comment lines starting with '#' are ignored)."""
+    if not CONTEXT_PATH.exists():
+        return ""
+    lines = [l for l in CONTEXT_PATH.read_text(encoding="utf-8").splitlines() if not l.lstrip().startswith("#")]
+    return "\n".join(lines).strip()
+
+
 SUPPORTED_RATIOS = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"]
 
 
