@@ -46,13 +46,22 @@ with st.sidebar:
         return gemini.list_models(gemini.client())
 
     models = _models()
-    # Defaults always first, so a stray alphabetical pick never becomes the default.
-    img_models = [config.RENDER_MODEL] + [m for m in models if "image" in m and m != config.RENDER_MODEL]
-    txt_models = [config.VISION_MODEL] + [m for m in models if "image" not in m and m != config.VISION_MODEL]
-    render_model = st.selectbox("Render model", img_models,
-                                index=0)
-    vision_model = st.selectbox("Analysis / QA model", txt_models,
-                                index=0)
+    img_avail = [m for m in models if "image" in m]
+    txt_avail = [m for m in models if "image" not in m]
+    d_render = config.pick(config.RENDER_PREFS, img_avail, "RENDER_MODEL", family="pro-image")
+    d_vision = config.pick(config.VISION_PREFS, txt_avail, "VISION_MODEL")
+    d_qa = config.pick(config.QA_PREFS, txt_avail, "QA_MODEL", family="pro")
+
+    def _opts(default, avail):  # default first, then everything else the key can use
+        return [default] + [m for m in avail if m != default]
+
+    render_model = st.selectbox("Render model (image)", _opts(d_render, img_avail), index=0,
+                                help="Recommended: Nano Banana Pro (gemini-3-pro-image) for final renders; "
+                                     "Nano Banana 2 (gemini-3.1-flash-image) is ~6x cheaper for drafts.")
+    vision_model = st.selectbox("Analysis / assignment model", _opts(d_vision, txt_avail), index=0,
+                                help="Recommended: latest Gemini Flash.")
+    qa_model = st.selectbox("QA model (checks the render)", _opts(d_qa, txt_avail), index=0,
+                            help="Recommended: Gemini Pro (better at spotting added/moved objects).")
     max_refs = st.slider("Max reference images", 3, 13, config.MAX_REFERENCES)
     n_candidates = st.slider("First-run candidates (parallel)", 1, 3, config.N_CANDIDATES,
                              help="More candidates = better first result, more API cost.")
@@ -64,7 +73,7 @@ with st.sidebar:
     if catalog.is_stale(index):  # missing, or images added/renamed -> build automatically
         bar = st.progress(0.0, "Indexing brand swatches (first run)…")
         try:
-            index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg))
+            index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg), model=vision_model)
         except Exception as e:
             st.error(gemini.explain(e))
             st.stop()
@@ -80,7 +89,7 @@ with st.sidebar:
             st.markdown(index["brand_brief"])
     if st.button("🔄 Rebuild index", use_container_width=True):
         bar = st.progress(0.0, "Indexing…")
-        index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg))
+        index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg), model=vision_model)
         st.rerun()
 
 if not index:
@@ -101,7 +110,7 @@ if up:
     if st.button("✨ Render with brand style", type="primary"):
         logbox = st.status("Running…", expanded=True)
         try:
-            res = agent.run(sketch, index, render_model=render_model, vision_model=vision_model,
+            res = agent.run(sketch, index, render_model=render_model, vision_model=vision_model, qa_model=qa_model,
                             extra_instructions=extra, max_refs=max_refs, max_retries=max_retries,
                             n_candidates=n_candidates, log=logbox.write)
         except Exception as e:

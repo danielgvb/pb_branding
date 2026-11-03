@@ -194,7 +194,7 @@ def select_references(c, index: dict, analysis: SceneAnalysis, budget: int) -> l
 
 # ---------- main entry ----------
 def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
-        vision_model: str | None = None, extra_instructions: str = "",
+        vision_model: str | None = None, qa_model: str | None = None, extra_instructions: str = "",
         max_refs: int = config.MAX_REFERENCES, max_retries: int = config.MAX_RETRIES,
         n_candidates: int = config.N_CANDIDATES,
         log: Callable[[str], None] = print) -> RunResult:
@@ -252,7 +252,7 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
         edge = fidelity.edge_fidelity(sketch, img)
         qa = gemini.ask_json(c, [sketch_part, gemini.to_part(img),
                                  QA_PROMPT.format(assignments=assignments, materials=materials_txt)],
-                             QAReport, vision_model)
+                             QAReport, qa_model or vision_model)
         major = [i for i in qa.issues if i.severity.lower() == "major"]
         passed = edge >= config.EDGE_FIDELITY_MIN and not major and qa.score >= config.QA_MIN_SCORE
         return {"image": img, "label": label, "edge_fidelity": round(edge, 3), "qa": qa.model_dump(),

@@ -64,11 +64,14 @@ For a private brand DB, keep the repo private, or set `BRAND_DB_DIR` to a mounte
 ## Configuration (env vars)
 | Var | Default | Note |
 |---|---|---|
-| `RENDER_MODEL` | `gemini-3-pro-image-preview` | Needs multi-reference image editing (up to 14 images) |
-| `VISION_MODEL` | `gemini-2.5-flash` | Any Gemini text+vision model |
-| `EMBED_MODEL` | `gemini-embedding-2-preview` | Multimodal embeddings |
-| `OUTPUT_SIZE` | `2K` | `1K` / `2K` / `4K` (Gemini 3 image models) |
+| `RENDER_MODEL` | Nano Banana Pro `gemini-3-pro-image` | Final renders. `gemini-3.1-flash-image` (Nano Banana 2) is ~6x cheaper for drafts |
+| `VISION_MODEL` | `gemini-flash-latest` | Analysis + material assignment + indexing |
+| `QA_MODEL` | `gemini-pro-latest` | Checks each render; Pro is better at spotting added/moved objects |
+| `EMBED_MODEL` | `gemini-embedding-2-preview` | Multimodal embeddings (large libraries only) |
+| `OUTPUT_SIZE` | `2K` | `1K` / `2K` / `4K` |
 
+If a preferred model is not available to your key, the app falls back to the newest matching one
+(newest `*-pro-image`, `*-flash`, `*-pro`).
 The sidebar lists the models your key can see, so you can swap models without code changes.
 
 ## Tips for good results

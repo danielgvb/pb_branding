@@ -82,7 +82,7 @@ def is_stale(index: dict | None) -> bool:
     return on_disk != {e["path"] for e in index["entries"]}
 
 
-def build_index(progress=None) -> dict:
+def build_index(progress=None, model: str | None = None) -> dict:
     c = gemini.client()
     files = scan()
     if not files:
@@ -92,7 +92,7 @@ def build_index(progress=None) -> dict:
     for i, (cat, p) in enumerate(files):
         label = label_from_path(p)
         img = load_path(p, 1024)
-        tags = gemini.ask_json(c, [gemini.to_part(img), TAG_PROMPT.format(label=label)], ImageTags)
+        tags = gemini.ask_json(c, [gemini.to_part(img), TAG_PROMPT.format(label=label)], ImageTags, model)
         try:
             emb = gemini.embed_image(c, img)
         except Exception:  # embeddings only matter for large libraries
@@ -105,7 +105,7 @@ def build_index(progress=None) -> dict:
     sample = entries[:14]
     labels = "\n".join(f"- Image {i + 1}: {e.label}" for i, e in enumerate(sample))
     brief = gemini.ask_text(c, [gemini.to_part(load_path(config.BRAND_DB_DIR / e.path, 768)) for e in sample]
-                            + [BRIEF_PROMPT.format(labels=labels)])
+                            + [BRIEF_PROMPT.format(labels=labels)], model)
 
     index = {"brand_brief": brief, "categories": sorted({e.category for e in entries}),
              "entries": [asdict(e) for e in entries]}
