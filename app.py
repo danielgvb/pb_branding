@@ -4,7 +4,14 @@ import io
 import streamlit as st
 from PIL import Image
 
+import importlib
+
 from brand_render import agent, catalog, config, fidelity, gemini
+
+# Streamlit Cloud re-runs app.py after a git push but can keep OLD versions of imported modules in
+# memory -> AttributeError on new functions. Reload our own modules (dependency order) on every run.
+for _m in (config, gemini, fidelity, catalog, agent):
+    importlib.reload(_m)
 
 st.set_page_config(page_title="Brand Render", page_icon="🏬", layout="wide")
 
