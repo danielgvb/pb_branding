@@ -9,6 +9,7 @@
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Callable
 
@@ -47,13 +48,15 @@ class AssignmentPlan(BaseModel):
     assignments: list[Assignment]
 
 
+class QAIssue(BaseModel):
+    issue: str         # concrete description
+    kind: str          # geometry | object | material | artifact
+    severity: str      # major | minor
+
+
 class QAReport(BaseModel):
-    geometry_preserved: bool       # same walls, openings, camera, proportions
-    objects_match: bool            # same objects, count, positions; nothing added/removed
-    materials_correct: bool        # each element shows its assigned material
-    added_or_changed: list[str]    # concrete geometry/object violations
-    material_issues: list[str]     # concrete material-assignment violations
-    score: int                     # 0-10 overall
+    issues: list[QAIssue]
+    score: int         # 0-10 overall fidelity + material correctness
 
 
 @dataclass
@@ -119,7 +122,7 @@ ABSOLUTE RULES (violating any of them is a failure):
 8. Apply each swatch at realistic real-world scale (tile/plank size, grain size), following the surface's
    perspective. Elements marked {keep} keep the color shown in IMAGE 1, rendered realistically.
 
-MATERIAL ASSIGNMENT (element -> material):
+MATERIAL ASSIGNMENT (material -> elements that use it):
 {assignments}
 
 STYLE BRIEF:
@@ -128,16 +131,36 @@ STYLE BRIEF:
 Output only the final rendered image, same aspect ratio as IMAGE 1."""
 
 QA_PROMPT = """IMAGE A is a SketchUp screenshot. IMAGE B is supposed to be the SAME scene rendered photorealistically.
-1) Geometry audit: compare camera, walls, openings and every object (count, position, size, shape).
-   List every object/feature in B that was ADDED, REMOVED, MOVED or RESHAPED compared with A.
-   Also report as a violation any drawn line visible in B (e.g. red/green/blue axis lines or outline
-   strokes copied from the SketchUp viewport): B must look like a photograph.
-   Material/lighting changes are expected and are NOT geometry violations.
-2) Material audit: this was the required material assignment:
+Audit B against A and list concrete issues, each with a kind and a severity.
+
+MAJOR (would make the render unusable):
+- camera/viewpoint/framing changed; a wall, opening, column or floor boundary moved or changed shape
+- an object ADDED that is not in A, or an object from A REMOVED, or clearly MOVED/RESIZED
+- a large surface (floor, a wall, columns, main furniture) with the WRONG material vs the assignment
+- drawn lines visible in B (axis lines, outline strokes copied from SketchUp)
+MINOR (acceptable): small decor details, slight shape/proportion differences, lighting/shading, texture
+scale or tone variations, small objects with slightly different materials.
+Material/lighting changes are expected and are not geometry issues. Be fair: do not report MAJOR unless sure.
+
+Required material assignment:
 {assignments}
-   The material descriptions are:
+Material descriptions:
 {materials}
-   List every element whose material in B clearly does not match its assignment."""
+
+Score 0-10: 10 = same design with the right materials, 7 = only minor issues, <5 = major issues."""
+
+REPAIR_PROMPT = """IMAGE 1 is a SketchUp model screenshot (the ground truth for geometry and objects).
+The material swatches are:
+{legend}
+The LAST image is a photorealistic render of IMAGE 1 that is ALMOST correct.
+
+TASK: Edit the LAST image to fix ONLY these problems:
+{issues}
+
+Keep everything else in the LAST image exactly as it is (camera, lighting, materials, all other objects).
+Do not add or remove anything else. No drawn lines. Material assignment for reference:
+{assignments}
+Output only the corrected image, same aspect ratio."""
 
 
 # ---------- helpers ----------
@@ -173,6 +196,7 @@ def select_references(c, index: dict, analysis: SceneAnalysis, budget: int) -> l
 def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
         vision_model: str | None = None, extra_instructions: str = "",
         max_refs: int = config.MAX_REFERENCES, max_retries: int = config.MAX_RETRIES,
+        n_candidates: int = config.N_CANDIDATES,
         log: Callable[[str], None] = print) -> RunResult:
     c = gemini.client()
     res = RunResult()
@@ -208,9 +232,13 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
     ref_parts = [gemini.to_part(catalog.load_ref(e)) for e in used]
     label_to_img = {e["label"]: i + 2 for i, e in enumerate(used)}
     legend = "\n".join(f"- IMAGE {i + 2} = {_describe(e, notes)}" for i, e in enumerate(used)) or "- (none)"
-    assignments = "\n".join(
-        f"- {el} -> {lab} (IMAGE {label_to_img[lab]})" if lab in known else f"- {el} -> {KEEP}"
-        for el, lab in pairs)
+    groups: dict[str, list[str]] = {}
+    for el, lab in pairs:
+        groups.setdefault(lab if lab in known else KEEP, []).append(el.replace("_", " "))
+    lines = [f"- {lab} (IMAGE {label_to_img[lab]}): {', '.join(els)}" for lab, els in groups.items() if lab != KEEP]
+    if KEEP in groups:
+        lines.append(f"- {KEEP} (keep the color shown in IMAGE 1, rendered realistically): {', '.join(groups[KEEP])}")
+    assignments = "\n".join(lines)
     log("   " + assignments.replace("\n", "\n   "))
 
     ratio = nearest_ratio(sketch)
@@ -218,33 +246,71 @@ def run(sketch: Image.Image, index: dict, *, render_model: str | None = None,
     if extra_instructions:
         brief += f"\nADDITIONAL INSTRUCTIONS FROM USER: {extra_instructions}"
     materials_txt = "\n".join(f"   - {_describe(e, notes)}" for e in used)
-    feedback = ""
+    swatch_parts = list(ref_parts)
 
-    for attempt in range(max_retries + 1):
-        log(f"4/5 Rendering (attempt {attempt + 1})…")
-        prompt = RENDER_RULES.format(legend=legend, assignments=assignments, brief=brief,
-                                     feedback=feedback, keep=KEEP)
-        img = gemini.generate_image(c, [sketch_part, *ref_parts, prompt], ratio, model=render_model)
-
-        log("5/5 Verifying…")
+    def evaluate(img: Image.Image, label: str) -> dict:
         edge = fidelity.edge_fidelity(sketch, img)
         qa = gemini.ask_json(c, [sketch_part, gemini.to_part(img),
                                  QA_PROMPT.format(assignments=assignments, materials=materials_txt)],
                              QAReport, vision_model)
-        passed = (edge >= config.EDGE_FIDELITY_MIN and qa.geometry_preserved and qa.objects_match
-                  and not qa.added_or_changed and qa.materials_correct)
-        res.attempts.append({"image": img, "edge_fidelity": round(edge, 3), "qa": qa.model_dump(), "passed": passed})
-        log(f"   edge fidelity {edge:.2f} | QA score {qa.score}/10 | {'PASS' if passed else 'FAIL'}")
-        if passed:
+        major = [i for i in qa.issues if i.severity.lower() == "major"]
+        passed = edge >= config.EDGE_FIDELITY_MIN and not major and qa.score >= config.QA_MIN_SCORE
+        return {"image": img, "label": label, "edge_fidelity": round(edge, 3), "qa": qa.model_dump(),
+                "major": [i.issue for i in major], "passed": passed}
+
+    def rank(a: dict):
+        return (a["passed"], -len(a["major"]), a["qa"]["score"] + 10 * a["edge_fidelity"])
+
+    def report(a: dict):
+        log(f"   {a['label']}: edge {a['edge_fidelity']:.2f} | QA {a['qa']['score']}/10 | "
+            f"{len(a['major'])} major issue(s) | {'PASS' if a['passed'] else 'FAIL'}")
+
+    # 4. First run: N independent candidates in parallel, keep the best (best-of-N beats sequential retries).
+    prompt = RENDER_RULES.format(legend=legend, assignments=assignments, brief=brief, feedback="", keep=KEEP)
+    log(f"4/5 Rendering {n_candidates} candidate(s) in parallel…")
+
+    def candidate(i: int) -> dict:
+        img = gemini.generate_image(c, [sketch_part, *swatch_parts, prompt], ratio, model=render_model)
+        return evaluate(img, f"candidate {i + 1}")
+
+    with ThreadPoolExecutor(max_workers=n_candidates) as ex:
+        futures = [ex.submit(candidate, i) for i in range(n_candidates)]
+        errors_ = []
+        for f in futures:
+            try:
+                res.attempts.append(f.result())
+            except Exception as e:  # one failed candidate should not kill the run
+                errors_.append(e)
+    if not res.attempts:
+        raise errors_[0]
+    log("5/5 Verified:")
+    for a in res.attempts:
+        report(a)
+    best = max(res.attempts, key=rank)
+
+    # 6. Repair: EDIT the best render to fix only its major issues; keep the edit only if it ranks higher.
+    for r in range(max_retries):
+        if best["passed"]:
             break
+        issues = best["major"] or [i["issue"] for i in best["qa"]["issues"]][:5]
+        if best["edge_fidelity"] < config.EDGE_FIDELITY_MIN:
+            issues.append("geometry/camera drifted from IMAGE 1: realign walls, openings and objects to IMAGE 1")
+        log(f"↺ Repair {r + 1}: fixing {len(issues)} issue(s) on the best render…")
+        rp = REPAIR_PROMPT.format(legend=legend, assignments=assignments,
+                                  issues="\n".join(f"- {x}" for x in issues))
+        try:
+            img = gemini.generate_image(c, [sketch_part, *swatch_parts, gemini.to_part(best["image"], 95), rp],
+                                        ratio, model=render_model)
+        except Exception as e:
+            log(f"   repair failed: {gemini.explain(e)[:200]}")
+            break
+        a = evaluate(img, f"repair {r + 1}")
+        res.attempts.append(a)
+        report(a)
+        if rank(a) > rank(best):
+            best = a
+        else:
+            log("   repair not better, keeping previous best")
 
-        issues = list(qa.added_or_changed) + list(qa.material_issues)
-        if edge < config.EDGE_FIDELITY_MIN:
-            issues.append(f"lines/geometry do not match the sketch (edge score {edge:.2f}); keep camera and geometry identical")
-        if not issues:
-            issues = ["geometry or materials drifted from the sketch/assignment"]
-        feedback = "\nA PREVIOUS ATTEMPT FAILED REVIEW. Fix these problems:\n- " + "\n- ".join(issues) + "\n"
-
-    best = max(res.attempts, key=lambda a: (a["passed"], a["qa"]["score"] + 10 * a["edge_fidelity"]))
     res.image, res.passed = best["image"], best["passed"]
     return res

@@ -18,7 +18,9 @@ EMBED_MODEL = os.getenv("EMBED_MODEL", "gemini-embedding-2-preview")
 DEFAULT_CATEGORIES = ["colors", "textures", "furniture", "lighting", "stores"]
 
 MAX_REFERENCES = 10          # sketch + refs must stay under the model's limit (14 for 3 Pro Image)
-MAX_RETRIES = 2              # re-render attempts when QA fails
+MAX_RETRIES = 2              # repair edits of the best render when QA fails
+N_CANDIDATES = 2             # independent renders on the first run (in parallel); best one is kept
+QA_MIN_SCORE = 7             # QA score needed to pass (plus no MAJOR issues and edge fidelity)
 EDGE_FIDELITY_MIN = 0.75     # min structural overlap (0-1); a 5% camera shift scored ~0.71 in tests. Tune on real sketches.
 OUTPUT_SIZE = os.getenv("OUTPUT_SIZE", "2K")  # 1K / 2K / 4K
 

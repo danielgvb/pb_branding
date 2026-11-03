@@ -54,7 +54,9 @@ with st.sidebar:
     vision_model = st.selectbox("Analysis / QA model", txt_models,
                                 index=0)
     max_refs = st.slider("Max reference images", 3, 13, config.MAX_REFERENCES)
-    max_retries = st.slider("Max repair attempts", 0, 3, config.MAX_RETRIES)
+    n_candidates = st.slider("First-run candidates (parallel)", 1, 3, config.N_CANDIDATES,
+                             help="More candidates = better first result, more API cost.")
+    max_retries = st.slider("Max repair edits", 0, 3, config.MAX_RETRIES)
 
     st.divider()
     st.subheader("Brand database")
@@ -101,7 +103,7 @@ if up:
         try:
             res = agent.run(sketch, index, render_model=render_model, vision_model=vision_model,
                             extra_instructions=extra, max_refs=max_refs, max_retries=max_retries,
-                            log=logbox.write)
+                            n_candidates=n_candidates, log=logbox.write)
         except Exception as e:
             logbox.update(label="Failed", state="error")
             st.error(gemini.explain(e))
@@ -127,8 +129,9 @@ if up and res:
         st.caption("Red = SketchUp lines drawn over the render. Lines should sit on the same edges.")
         st.image(fidelity.overlay(sketch, res.image), use_container_width=True)
     with t2:
-        for i, a in enumerate(res.attempts, 1):
-            st.markdown(f"**Attempt {i}** — edge fidelity `{a['edge_fidelity']}` · QA `{a['qa']['score']}/10` · "
+        for a in res.attempts:
+            chosen = " ⭐ chosen" if a["image"] is res.image else ""
+            st.markdown(f"**{a['label']}**{chosen} — edge fidelity `{a['edge_fidelity']}` · QA `{a['qa']['score']}/10` · "
                         f"{'✅ pass' if a['passed'] else '❌ fail'}")
             c1, c2 = st.columns([1, 1])
             c1.image(a["image"], use_container_width=True)
