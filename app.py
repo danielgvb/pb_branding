@@ -6,14 +6,16 @@ from PIL import Image
 
 import importlib
 
-from brand_render import agent, catalog, config, fidelity, gemini
+from brand_render import agent, catalog, config, fidelity, gemini, ui
 
 # Streamlit Cloud re-runs app.py after a git push but can keep OLD versions of imported modules in
 # memory -> AttributeError on new functions. Reload our own modules (dependency order) on every run.
-for _m in (config, gemini, fidelity, catalog, agent):
+for _m in (config, gemini, fidelity, catalog, agent, ui):
     importlib.reload(_m)
 
-st.set_page_config(page_title="Brand Render", page_icon="🏬", layout="wide")
+st.set_page_config(page_title="Render-O-Matic 3000", page_icon="🌈", layout="wide")
+serious = st.sidebar.toggle("😎 Serious mode", value=False, help="Turn off the WordArt (for meetings).")
+ui.apply(serious)
 
 # ---------- password gate (set APP_PASSWORD in Streamlit Secrets; protects your Gemini key) ----------
 def _password_ok() -> bool:
@@ -38,12 +40,12 @@ except Exception:  # no secrets.toml at all (local run)
 if not _gate:
     st.stop()
 
-st.title("🏬 SketchUp → Brand Render")
-st.caption("Applies the brand's materials, colors and lighting to a SketchUp screenshot — without changing the design.")
+ui.header(serious)
+ui.construction(serious)
 
 # ---------- sidebar ----------
 with st.sidebar:
-    st.header("Settings")
+    st.header(ui.label(serious, "Settings", "⚙️ SeTTiNgZ ⚙️"))
     if not config.api_key():
         st.error("Set GEMINI_API_KEY in .streamlit/secrets.toml or as an env var.")
         st.stop()
@@ -75,7 +77,7 @@ with st.sidebar:
     max_retries = st.slider("Max repair edits", 0, 3, config.MAX_RETRIES)
 
     st.divider()
-    st.subheader("Brand database")
+    st.subheader(ui.label(serious, "Brand database", "🎨 Da Swatchez 🎨"))
     index = catalog.load_index()
     if catalog.is_stale(index):  # missing, or images added/renamed -> build automatically
         bar = st.progress(0.0, "Indexing brand swatches (first run)…")
@@ -94,16 +96,17 @@ with st.sidebar:
                 st.markdown(f"**{e['label']}** — {e['material']} ({e['finish']}){note}")
         with st.expander("Style brief"):
             st.markdown(index["brand_brief"])
-    if st.button("🔄 Rebuild index", use_container_width=True):
+    if st.button(ui.label(serious, "🔄 Rebuild index", "🔄 ReDo DaTaBaSe!!"), use_container_width=True):
         bar = st.progress(0.0, "Indexing…")
         index = catalog.build_index(progress=lambda p, msg: bar.progress(p, msg), model=vision_model)
         st.rerun()
+    ui.counter(serious)
 
 if not index:
     st.stop()
 
 # ---------- main ----------
-up = st.file_uploader("SketchUp screenshot (JPG/PNG)", type=["jpg", "jpeg", "png"])
+up = st.file_uploader(ui.label(serious, "SketchUp screenshot (JPG/PNG)", "📸 drop ur SketchUp pic here!!! (JPG/PNG)"), type=["jpg", "jpeg", "png"])
 extra = st.text_input("Notes for this image (optional)",
                       placeholder="e.g. 'the draped partition is a linen curtain', 'the mural stays as is'")
 with st.expander("📋 Project rules sent to every step (edit for this session; permanent: render_context.md)"):
@@ -117,7 +120,7 @@ if up:
     if "res" not in st.session_state:
         st.image(sketch, caption="Input (SketchUp)", width=520)
 
-    if st.button("✨ Render with brand style", type="primary"):
+    if st.button(ui.label(serious, "✨ Render with brand style", "✨🌈 MAKE IT REAL!!!1! 🌈✨"), type="primary"):
         logbox = st.status("Running…", expanded=True)
         try:
             res = agent.run(sketch, index, render_model=render_model, vision_model=vision_model, qa_model=qa_model,
@@ -140,7 +143,7 @@ if up and res:
     col2.image(res.image, caption="Render" + ("" if res.passed else " (did not pass all checks)"),
                use_container_width=True)
     buf = io.BytesIO(); res.image.save(buf, "JPEG", quality=95)
-    st.download_button("⬇️ Download render", buf.getvalue(), "render.jpg", "image/jpeg")
+    st.download_button(ui.label(serious, "⬇️ Download render", "💾 SAVE 2 MY COMPUTER 💾"), buf.getvalue(), "render.jpg", "image/jpeg")
 
     t1, t2, t3, t4, t5 = st.tabs(["Fidelity overlay", "Attempts", "Material assignment", "Swatches used",
                                   "Scene analysis"])
